@@ -8,7 +8,7 @@ services:
     startCommand: "gunicorn dermai.wsgi:application --workers 2 --timeout 120"
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.9
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG
@@ -24,3 +24,4 @@ databases:
   - name: dermai-db
     region: singapore
     plan: free
+
