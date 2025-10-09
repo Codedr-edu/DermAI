@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 import base64
 import re
 import json
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.core.files.base import ContentFile
@@ -51,6 +51,10 @@ def upload_file(request):
             return JsonResponse({"error": str(e)}, status=500)
 
     return JsonResponse({"error": "Chỉ hỗ trợ POST"}, status=405)
+
+
+def health(request):
+    return HttpResponse("ok", status=200)
 
 
 @csrf_exempt
