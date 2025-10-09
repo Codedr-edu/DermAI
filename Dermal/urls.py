@@ -21,5 +21,6 @@ urlpatterns = [
     path('profile/', your_profile, name='your_profile'),
     path('upload/file/', upload_file, name='upload_file'),
     # path('edit_profile/', edit_profile, name='edit_profile'),
-    path('predict/', predict, name="predict")
+    path('predict/', predict, name="predict"),
+    path('health/', health, name='health'),
 ]
