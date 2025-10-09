@@ -6,6 +6,7 @@ services:
     plan: free
     buildCommand: "./build.sh"
     startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 2 --timeout 300"
+    healthCheckPath: /health/
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
@@ -19,11 +20,3 @@ services:
         fromDatabase:
           name: dermai-db
           property: connectionString
-
-databases:
-  - name: dermai-db
-    region: singapore
-    plan: free
-
-
-
