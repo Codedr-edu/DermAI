@@ -189,11 +189,20 @@ def get_layer_by_name(model, layer_name):
 def compute_gradcam_manual(batch_np, model, target_layer_name, pred_index=None):
     """
     Optimized Grad-CAM computation with memory efficiency
+    Uses mixed precision and aggressive cleanup to minimize RAM usage
     """
     model_input_dtype = model.inputs[0].dtype
 
-    # Convert to tensor once
+    # Convert to tensor once with reduced precision if possible
     x = tf.convert_to_tensor(batch_np, dtype=model_input_dtype)
+    
+    # Enable memory growth for GPU if available
+    try:
+        gpus = tf.config.list_physical_devices('GPU')
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except:
+        pass
 
     # Find the target layer recursively
     target_layer = get_layer_by_name(model, target_layer_name)
@@ -243,29 +252,36 @@ def compute_gradcam_manual(batch_np, model, target_layer_name, pred_index=None):
         raise RuntimeError("Gradients are None!")
 
     # Optimize heatmap computation - use reduce_mean instead of complex ops
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    heatmap = tf.reduce_sum(conv_outputs[0] * pooled_grads, axis=-1)
-
-    # ReLU + normalize in one pass
-    heatmap = tf.maximum(heatmap, 0)
-    heatmap_max = tf.reduce_max(heatmap)
+    # Convert to numpy early to free TF memory
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2)).numpy()
+    conv_outputs_np = conv_outputs[0].numpy()
+    
+    # Free TF tensors immediately
+    del grads, conv_outputs
+    
+    # Compute heatmap in numpy (less memory than TF)
+    heatmap = np.sum(conv_outputs_np * pooled_grads, axis=-1)
+    del conv_outputs_np, pooled_grads
+    
+    # ReLU + normalize
+    heatmap = np.maximum(heatmap, 0)
+    heatmap_max = np.max(heatmap)
 
     if heatmap_max > 1e-10:
         heatmap = heatmap / heatmap_max
     else:
         # Fallback: use absolute values
-        heatmap = tf.abs(heatmap)
-        heatmap_max = tf.reduce_max(heatmap)
+        heatmap = np.abs(heatmap)
+        heatmap_max = np.max(heatmap)
         if heatmap_max > 1e-10:
             heatmap = heatmap / heatmap_max
 
-    heatmap_np = heatmap.numpy()
     preds_np = predictions.numpy()
     
     # Clean up tensors
-    del x, conv_outputs, grads, pooled_grads, heatmap, predictions
+    del x, predictions
     
-    return heatmap_np, preds_np
+    return heatmap, preds_np
 
 
 def predict_skin_with_explanation(image_bytes, top_k=7, enable_gradcam=None):

@@ -21,9 +21,10 @@ services:
         fromDatabase:
           name: dermai-db
           property: connectionString
-      # Disable Grad-CAM on production to save memory (set to 'true' to enable)
+      # Grad-CAM enabled by default (optimized version)
+      # Set to 'false' only if still getting OOM errors
       - key: ENABLE_GRADCAM
-        value: false
+        value: true
       # TensorFlow optimizations
       - key: TF_CPP_MIN_LOG_LEVEL
         value: "3"
