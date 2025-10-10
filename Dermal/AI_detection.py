@@ -10,6 +10,7 @@ import base64
 import matplotlib.cm as cm
 import time
 import traceback
+import gc
 
 
 MODEL_PATH = os.path.join(os.path.dirname(
@@ -25,30 +26,89 @@ CLASS_NAMES = [
     "Warts Molluscum and other Viral Infections",
 ]
 
-print("🔄 Loading model from:", MODEL_PATH)
-_loaded_model = keras.models.load_model(MODEL_PATH, compile=False)
-print("✅ Loaded model:", type(_loaded_model),
-      "name:", getattr(_loaded_model, "name", None))
+# Global variable to hold the model (lazy loaded)
+_loaded_model = None
+_model_lock = None
 
-# Extract input info
-try:
-    orig_input_tensor = _loaded_model.inputs[0]
-    orig_dtype = orig_input_tensor.dtype
-    orig_shape = orig_input_tensor.shape.as_list()[1:]
-    print(f"Model input info: shape={orig_shape}, dtype={orig_dtype}")
-except Exception as e:
-    print(f"⚠️ Error extracting input info: {e}")
-    orig_shape = [IMG_SIZE_DEFAULT, IMG_SIZE_DEFAULT, 3]
-    orig_dtype = tf.float32
+# Check if Grad-CAM should be enabled (can be disabled to save memory)
+ENABLE_GRADCAM = os.getenv('ENABLE_GRADCAM', 'true').lower() in ('true', '1', 'yes')
 
-IMG_SIZE = orig_shape[0] if orig_shape[0] else IMG_SIZE_DEFAULT
 
-WRAPPED_MODEL = _loaded_model
+def get_model():
+    """
+    Lazy load the model only when needed.
+    This prevents loading the model on import, saving memory.
+    """
+    global _loaded_model, _model_lock
+    
+    if _loaded_model is not None:
+        return _loaded_model
+    
+    # Thread lock for thread-safe loading
+    if _model_lock is None:
+        import threading
+        _model_lock = threading.Lock()
+    
+    with _model_lock:
+        # Double-check locking
+        if _loaded_model is not None:
+            return _loaded_model
+        
+        print("🔄 Loading model from:", MODEL_PATH)
+        
+        # Configure TensorFlow for memory efficiency
+        # Limit memory growth
+        gpus = tf.config.list_physical_devices('GPU')
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        
+        # Load model without compilation to save memory
+        _loaded_model = keras.models.load_model(MODEL_PATH, compile=False)
+        print("✅ Loaded model:", type(_loaded_model),
+              "name:", getattr(_loaded_model, "name", None))
+        
+        # Extract input info
+        try:
+            orig_input_tensor = _loaded_model.inputs[0]
+            orig_dtype = orig_input_tensor.dtype
+            orig_shape = orig_input_tensor.shape.as_list()[1:]
+            print(f"Model input info: shape={orig_shape}, dtype={orig_dtype}")
+        except Exception as e:
+            print(f"⚠️ Error extracting input info: {e}")
+        
+        # Warm up the model with a small input
+        try:
+            orig_input_tensor = _loaded_model.inputs[0]
+            orig_shape = orig_input_tensor.shape.as_list()[1:]
+            dummy_input = tf.zeros((1,) + tuple(orig_shape), dtype=orig_input_tensor.dtype)
+            _ = _loaded_model(dummy_input, training=False)
+            print("✅ Model warmed up")
+            del dummy_input
+        except Exception as e:
+            print(f"⚠️ Warmup failed: {e}")
+        
+        return _loaded_model
 
-# Warm up the model
-dummy_input = tf.zeros((1,) + tuple(orig_shape), dtype=orig_dtype)
-_ = WRAPPED_MODEL(dummy_input, training=False)
-print("✅ Model warmed up")
+
+def get_img_size():
+    """Get image size from model"""
+    model = get_model()
+    try:
+        orig_shape = model.inputs[0].shape.as_list()[1:]
+        return orig_shape[0] if orig_shape[0] else IMG_SIZE_DEFAULT
+    except:
+        return IMG_SIZE_DEFAULT
+
+
+def cleanup_memory():
+    """Force garbage collection and clear TF session cache"""
+    try:
+        # Clear Keras backend session
+        tf.keras.backend.clear_session()
+        # Force garbage collection
+        gc.collect()
+    except Exception as e:
+        print(f"⚠️ Cleanup warning: {e}")
 
 
 def pil_to_np(img_pil, img_size):
@@ -97,7 +157,6 @@ def find_target_layer_for_gradcam(model):
             # Look for conv layers
             if isinstance(layer, (Conv2D, DepthwiseConv2D, SeparableConv2D)):
                 target_layer_name = layer.name
-                print(f"  🔍 Found conv: {layer_path}")
 
             # Recursively search nested models
             if isinstance(layer, tf.keras.Model):
@@ -110,7 +169,6 @@ def find_target_layer_for_gradcam(model):
         for layer in model.layers:
             if 'top_conv' in layer.name or 'block7' in layer.name or 'block6' in layer.name:
                 target_layer_name = layer.name
-                print(f"  🔍 Using EfficientNet layer: {layer.name}")
                 break
 
     return target_layer_name
@@ -130,7 +188,7 @@ def get_layer_by_name(model, layer_name):
 
 def compute_gradcam_manual(batch_np, model, target_layer_name, pred_index=None):
     """
-    Optimized Grad-CAM computation for CPU
+    Optimized Grad-CAM computation with memory efficiency
     """
     model_input_dtype = model.inputs[0].dtype
 
@@ -146,7 +204,7 @@ def compute_gradcam_manual(batch_np, model, target_layer_name, pred_index=None):
 
     print(f"  ✅ Target: {target_layer.name}")
 
-    # Use non-persistent tape (faster)
+    # Use non-persistent tape (faster and less memory)
     conv_outputs = None
 
     # Monkey-patch the target layer
@@ -184,7 +242,7 @@ def compute_gradcam_manual(batch_np, model, target_layer_name, pred_index=None):
     if grads is None:
         raise RuntimeError("Gradients are None!")
 
-    # Optimize heatmap computation - use einsum instead of matmul
+    # Optimize heatmap computation - use reduce_mean instead of complex ops
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     heatmap = tf.reduce_sum(conv_outputs[0] * pooled_grads, axis=-1)
 
@@ -201,39 +259,53 @@ def compute_gradcam_manual(batch_np, model, target_layer_name, pred_index=None):
         if heatmap_max > 1e-10:
             heatmap = heatmap / heatmap_max
 
-    print(f"  ✅ Heatmap computed: {heatmap.shape}")
+    heatmap_np = heatmap.numpy()
+    preds_np = predictions.numpy()
+    
+    # Clean up tensors
+    del x, conv_outputs, grads, pooled_grads, heatmap, predictions
+    
+    return heatmap_np, preds_np
 
-    return heatmap.numpy(), predictions.numpy()
 
-
-def predict_skin_with_explanation(image_bytes, top_k=7):
+def predict_skin_with_explanation(image_bytes, top_k=7, enable_gradcam=None):
     """
-    Predict skin condition with Grad-CAM explanation
+    Predict skin condition with optional Grad-CAM explanation
+    
+    Args:
+        image_bytes: Image data in bytes
+        top_k: Number of top predictions to return
+        enable_gradcam: Override ENABLE_GRADCAM setting (True/False/None for default)
     """
     start_time = time.time()
+    
+    # Determine if Grad-CAM should be enabled
+    if enable_gradcam is None:
+        enable_gradcam = ENABLE_GRADCAM
+    
+    # Get model (lazy loaded)
+    model = get_model()
+    img_size = get_img_size()
 
     # Load image
-    with Image.open(io.BytesIO(image_bytes)) as pil:
-        pil = pil.convert("RGB")
-        np_img = pil_to_np(pil, IMG_SIZE)
-
-    # Find target layer
-    print("🔍 Searching for target layer...")
-    target_layer_name = find_target_layer_for_gradcam(WRAPPED_MODEL)
-
-    if target_layer_name is None:
-        print("❌ No suitable layer found for Grad-CAM!")
-    else:
-        print(f"✅ Target layer: {target_layer_name}")
+    pil = None
+    np_img = None
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as pil_temp:
+            pil = pil_temp.convert("RGB")
+            np_img = pil_to_np(pil, img_size)
+    except Exception as e:
+        print(f"❌ Error loading image: {e}")
+        raise
 
     # Preprocess
     chosen_method = None
     chosen_batch = None
     preds = None
 
-    for name, batch in candidate_preprocessors(np_img, WRAPPED_MODEL.inputs[0].dtype):
+    for name, batch in candidate_preprocessors(np_img, model.inputs[0].dtype):
         try:
-            preds = WRAPPED_MODEL(batch, training=False).numpy()
+            preds = model(batch, training=False).numpy()
             chosen_method = name
             chosen_batch = batch
             print(f"✅ Preprocessing '{name}' works")
@@ -259,60 +331,75 @@ def predict_skin_with_explanation(image_bytes, top_k=7):
     print(
         f"\n📊 Top prediction: {results[0]['class']} ({results[0]['probability']:.2f}%)")
 
-    # Generate Grad-CAM
+    # Generate Grad-CAM only if enabled
     heatmap_base64 = None
-    if target_layer_name is not None:
-        try:
-            print("\n🔥 Computing Grad-CAM...")
-            heatmap, _ = compute_gradcam_manual(
-                chosen_batch, WRAPPED_MODEL, target_layer_name
-            )
+    if enable_gradcam:
+        target_layer_name = find_target_layer_for_gradcam(model)
+        
+        if target_layer_name is not None:
+            try:
+                print("\n🔥 Computing Grad-CAM...")
+                heatmap, _ = compute_gradcam_manual(
+                    chosen_batch, model, target_layer_name
+                )
 
-            print(f"  🔍 Heatmap shape: {heatmap.shape}")
-            print(
-                f"  🔍 Heatmap range: [{heatmap.min():.4f}, {heatmap.max():.4f}]")
+                print(f"  🔍 Heatmap shape: {heatmap.shape}")
+                print(
+                    f"  🔍 Heatmap range: [{heatmap.min():.4f}, {heatmap.max():.4f}]")
 
-            # Create visualization
-            original_img = pil.resize((IMG_SIZE, IMG_SIZE))
+                # Create visualization
+                original_img = pil.resize((img_size, img_size))
 
-            # Resize heatmap
-            heatmap_uint8 = np.uint8(255 * heatmap)
-            heatmap_img = Image.fromarray(heatmap_uint8).resize(
-                (IMG_SIZE, IMG_SIZE), Image.BILINEAR
-            )
-            heatmap_arr = np.array(heatmap_img) / 255.0
+                # Resize heatmap
+                heatmap_uint8 = np.uint8(255 * heatmap)
+                heatmap_img = Image.fromarray(heatmap_uint8).resize(
+                    (img_size, img_size), Image.BILINEAR
+                )
+                heatmap_arr = np.array(heatmap_img) / 255.0
 
-            # Apply colormap
-            colormap = cm.get_cmap("jet")
-            colored_heatmap = colormap(heatmap_arr)[:, :, :3]
-            colored_heatmap_uint8 = np.uint8(255 * colored_heatmap)
+                # Apply colormap
+                colormap = cm.get_cmap("jet")
+                colored_heatmap = colormap(heatmap_arr)[:, :, :3]
+                colored_heatmap_uint8 = np.uint8(255 * colored_heatmap)
 
-            # Blend
-            superimposed = Image.blend(
-                original_img.convert("RGBA"),
-                Image.fromarray(colored_heatmap_uint8).convert("RGBA"),
-                alpha=0.4,
-            )
+                # Blend
+                superimposed = Image.blend(
+                    original_img.convert("RGBA"),
+                    Image.fromarray(colored_heatmap_uint8).convert("RGBA"),
+                    alpha=0.4,
+                )
 
-            # Encode
-            buf = io.BytesIO()
-            superimposed.save(buf, format="PNG")
-            heatmap_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            print("✅ Grad-CAM generated!")
+                # Encode
+                buf = io.BytesIO()
+                superimposed.save(buf, format="PNG")
+                heatmap_base64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                print("✅ Grad-CAM generated!")
+                
+                # Clean up
+                del heatmap, heatmap_uint8, heatmap_img, heatmap_arr
+                del colored_heatmap, colored_heatmap_uint8, superimposed, buf
 
-        except Exception as e:
-            print(f"❌ Grad-CAM failed: {e}")
-            traceback.print_exc()
-            heatmap_base64 = None
+            except Exception as e:
+                print(f"❌ Grad-CAM failed: {e}")
+                traceback.print_exc()
+                heatmap_base64 = None
+        else:
+            print("❌ No suitable layer found for Grad-CAM!")
+    else:
+        print("ℹ️ Grad-CAM disabled (to save memory)")
 
     elapsed = time.time() - start_time
     print(
         f"\n⏱️ Time: {elapsed:.2f}s | Method: {chosen_method} | Heatmap: {'✅' if heatmap_base64 else '❌'}\n")
 
+    # Clean up
+    del pil, np_img, chosen_batch, preds, preds_vect
+    cleanup_memory()
+
     return results, heatmap_base64
 
 
 def predict_skin_simple(image_bytes, top_k=7):
-    """Simple prediction without explanation"""
-    res, _ = predict_skin_with_explanation(image_bytes, top_k=top_k)
+    """Simple prediction without explanation (memory efficient)"""
+    res, _ = predict_skin_with_explanation(image_bytes, top_k=top_k, enable_gradcam=False)
     return res

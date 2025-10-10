@@ -5,7 +5,8 @@ services:
     region: singapore
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 4 --timeout 300"
+    # Optimized for low memory: 1 worker, 2 threads, restart after 100 requests
+    startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 2 --worker-class gthread --timeout 300 --max-requests 100 --max-requests-jitter 10 --worker-tmp-dir /dev/shm"
     healthCheckPath: /health/
     envVars:
       - key: PYTHON_VERSION
@@ -20,4 +21,19 @@ services:
         fromDatabase:
           name: dermai-db
           property: connectionString
+      # Disable Grad-CAM on production to save memory (set to 'true' to enable)
+      - key: ENABLE_GRADCAM
+        value: false
+      # TensorFlow optimizations
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "3"
+      - key: TF_ENABLE_ONEDNN_OPTS
+        value: "0"
+      # Limit numpy threads
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"rty: connectionString
 

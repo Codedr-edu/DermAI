@@ -133,3 +133,15 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Memory optimization settings
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB max upload size
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5242880  # 5MB max file size in memory
+
+# Session optimization
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+SESSION_COOKIE_AGE = 86400  # 1 day
+SESSION_SAVE_EVERY_REQUEST = False
+
+# Database connection optimization
+CONN_MAX_AGE = 60  # Keep connections for 60 seconds
