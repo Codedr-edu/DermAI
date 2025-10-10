@@ -8,7 +8,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.core.files.base import ContentFile
 from django.contrib.auth import authenticate, login
 from .models import *
-from .AI_detection import predict_skin_with_explanation
+from .AI_detection_optimized import predict_skin_with_explanation_optimized as predict_skin_with_explanation
+from memory_monitor import memory_monitor, force_cleanup
 import os
 import requests
 import markdown2
@@ -22,6 +23,7 @@ from django.urls import reverse
 
 @csrf_exempt
 @login_required
+@memory_monitor
 def upload_file(request):
     if request.method == "POST":
         try:
@@ -59,6 +61,7 @@ def health(request):
 
 @csrf_exempt
 @login_required
+@memory_monitor
 def upload_image(request):
     if request.method == "POST":
         try:
