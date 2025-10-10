@@ -36,5 +36,5 @@ services:
       - key: OPENBLAS_NUM_THREADS
         value: "1"
       - key: MKL_NUM_THREADS
-        value: "1"rty: connectionString
+        value: "1"
 
