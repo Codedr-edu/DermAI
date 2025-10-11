@@ -1,147 +1,165 @@
+#!/usr/bin/env python3
 """
-Script to quantize the model to float16 to reduce memory usage.
-Run this script once to convert the model.
+Quantize TensorFlow model từ FP32 sang FP16
 
 Usage:
     python Dermal/quantize_model.py
+
+Notes:
+    - Chỉ nên chạy nếu model > 500MB
+    - Model 95MB không cần quantize!
+    - Quantization có thể giảm 1-2% accuracy
 """
+
 import tensorflow as tf
-from tensorflow import keras
 import os
-import numpy as np
-from PIL import Image
-import io
+import sys
 
-MODEL_PATH = os.path.join(os.path.dirname(__file__), "dermatology_stage1.keras")
-QUANTIZED_PATH = os.path.join(os.path.dirname(__file__), "dermatology_stage1_fp16.keras")
-
-print("=" * 70)
-print("🔧 MODEL QUANTIZATION SCRIPT")
-print("=" * 70)
-print()
-
-# Check if original model exists
-if not os.path.exists(MODEL_PATH):
-    print(f"❌ ERROR: Model not found at {MODEL_PATH}")
-    exit(1)
-
-print(f"Loading model from: {MODEL_PATH}")
-model = keras.models.load_model(MODEL_PATH, compile=False)
-
-original_size = os.path.getsize(MODEL_PATH) / (1024*1024)
-print(f"✅ Original model loaded: {original_size:.2f} MB")
-print()
-
-# Test prediction with original model
-print("🧪 Testing original model...")
-try:
-    # Create dummy image
-    dummy_img = np.random.randint(0, 255, (300, 300, 3), dtype=np.uint8)
-    pil_img = Image.fromarray(dummy_img)
-    buf = io.BytesIO()
-    pil_img.save(buf, format='JPEG')
-    
-    # Simple preprocess
-    img = pil_img.resize((300, 300))
-    img_array = np.array(img) / 255.0
-    img_batch = np.expand_dims(img_array, axis=0).astype(np.float32)
-    
-    # Predict
-    pred_original = model.predict(img_batch, verbose=0)
-    print(f"✅ Original model prediction: {pred_original[0][:3]}")
-except Exception as e:
-    print(f"⚠️ Warning: Could not test original model: {e}")
-    pred_original = None
-print()
-
-# Convert to float16
-print("🔄 Converting weights to float16...")
-converted_layers = 0
-for layer in model.layers:
+def check_model_dtype(model_path):
+    """Check xem model đã quantize chưa"""
     try:
-        if hasattr(layer, 'kernel') and layer.kernel is not None:
-            layer.kernel = tf.cast(layer.kernel, tf.float16)
-            converted_layers += 1
-        if hasattr(layer, 'bias') and layer.bias is not None:
-            layer.bias = tf.cast(layer.bias, tf.float16)
-    except Exception as e:
-        # Some layers may not support float16
-        print(f"  ⚠️ Could not convert {layer.name}: {e}")
-        continue
-
-print(f"✅ Converted {converted_layers} layers to float16")
-print()
-
-# Test prediction with quantized model
-print("🧪 Testing quantized model...")
-try:
-    pred_quantized = model.predict(img_batch, verbose=0)
-    print(f"✅ Quantized model prediction: {pred_quantized[0][:3]}")
-    
-    if pred_original is not None:
-        # Compare predictions
-        diff = np.abs(pred_original - pred_quantized).max()
-        print(f"   Max difference: {diff:.6f}")
+        model = tf.keras.models.load_model(model_path, compile=False)
         
-        if diff < 0.01:
-            print(f"   ✅ EXCELLENT! Predictions very similar (< 1%)")
-        elif diff < 0.05:
-            print(f"   ✅ GOOD! Predictions similar (< 5%)")
-        else:
-            print(f"   ⚠️ WARNING! Predictions differ by {diff*100:.2f}%")
-except Exception as e:
-    print(f"⚠️ Warning: Could not test quantized model: {e}")
-print()
+        # Check dtype của layer đầu tiên
+        for layer in model.layers:
+            if hasattr(layer, 'weights') and layer.weights:
+                dtype = layer.weights[0].dtype
+                print(f"🔍 Model dtype: {dtype}")
+                
+                if 'float16' in str(dtype):
+                    return 'FP16'
+                elif 'float32' in str(dtype):
+                    return 'FP32'
+                elif 'int8' in str(dtype):
+                    return 'INT8'
+                break
+        
+        return 'UNKNOWN'
+    except Exception as e:
+        print(f"⚠️ Cannot check dtype: {e}")
+        return 'UNKNOWN'
 
-# Save quantized model
-print(f"💾 Saving quantized model to: {QUANTIZED_PATH}")
-try:
-    model.save(QUANTIZED_PATH)
-    quantized_size = os.path.getsize(QUANTIZED_PATH) / (1024*1024)
+def quantize_model(input_path, output_path=None):
+    """
+    Quantize model using TFLite converter
     
-    print(f"✅ Quantized model saved!")
-    print()
-    print("=" * 70)
-    print("📊 RESULTS")
-    print("=" * 70)
-    print(f"Original size:   {original_size:.2f} MB")
-    print(f"Quantized size:  {quantized_size:.2f} MB")
-    print(f"Reduction:       {original_size - quantized_size:.2f} MB ({(1-quantized_size/original_size)*100:.1f}%)")
-    print()
+    Args:
+        input_path: Path to input model (.keras)
+        output_path: Path to output model (.tflite), auto-generated if None
+    """
     
-    # Estimate RAM savings
-    ram_original = original_size * 2.4  # Rough estimate: file × 2.4 = RAM
-    ram_quantized = quantized_size * 2.4
-    print(f"Estimated RAM usage:")
-    print(f"  Original:      ~{ram_original:.0f} MB")
-    print(f"  Quantized:     ~{ram_quantized:.0f} MB")
-    print(f"  RAM savings:   ~{ram_original - ram_quantized:.0f} MB")
-    print()
+    # Validate input
+    if not os.path.exists(input_path):
+        print(f"❌ Model không tồn tại: {input_path}")
+        return False
     
-    print("=" * 70)
-    print("✅ QUANTIZATION COMPLETE!")
-    print("=" * 70)
-    print()
-    print("Next steps:")
-    print()
-    print("1. TEST the quantized model:")
-    print("   python test_before_deploy.py")
-    print()
-    print("2. If accuracy is acceptable:")
-    print("   # Backup original")
-    print("   mv Dermal/dermatology_stage1.keras Dermal/dermatology_stage1_original.keras")
-    print()
-    print("   # Use quantized")
-    print("   mv Dermal/dermatology_stage1_fp16.keras Dermal/dermatology_stage1.keras")
-    print()
-    print("3. Commit and deploy:")
-    print("   git add Dermal/dermatology_stage1.keras")
-    print("   git commit -m 'Use quantized model for lower memory usage'")
-    print("   git push")
-    print()
+    # Get original size
+    original_size_mb = os.path.getsize(input_path) / (1024 * 1024)
+    print(f"\n📦 Original model: {original_size_mb:.1f} MB")
     
-except Exception as e:
-    print(f"❌ ERROR saving model: {e}")
-    import traceback
-    traceback.print_exc()
-    exit(1)
+    # Check dtype
+    dtype = check_model_dtype(input_path)
+    if dtype == 'FP16':
+        print(f"✅ Model đã là FP16 rồi!")
+        print(f"   Không cần quantize thêm.")
+        return False
+    elif dtype == 'INT8':
+        print(f"✅ Model đã là INT8 rồi!")
+        print(f"   Không cần quantize thêm.")
+        return False
+    
+    # Check if model is small enough
+    if original_size_mb < 200:
+        print(f"\n✅ Model đã đủ nhỏ ({original_size_mb:.1f} MB < 200 MB)")
+        print(f"   Peak memory ước tính: ~{original_size_mb * 3 + 200:.0f} MB")
+        
+        response = input("\n❓ Vẫn muốn quantize? (y/N): ").strip().lower()
+        if response != 'y':
+            print("   Bỏ qua quantization.")
+            return False
+    
+    print("\n🔄 Đang quantize model...")
+    print("   (Có thể mất vài phút...)")
+    
+    try:
+        # Load model
+        print("   Loading model...")
+        model = tf.keras.models.load_model(input_path, compile=False)
+        
+        # Convert to TFLite with FP16 quantization
+        print("   Converting to TFLite...")
+        converter = tf.lite.TFLiteConverter.from_keras_model(model)
+        
+        # Enable optimizations
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        
+        # Use FP16 quantization
+        converter.target_spec.supported_types = [tf.float16]
+        
+        # Convert
+        print("   Quantizing...")
+        tflite_model = converter.convert()
+        
+        # Generate output path if not provided
+        if output_path is None:
+            base_name = os.path.splitext(input_path)[0]
+            output_path = f"{base_name}_quantized.tflite"
+        
+        # Save
+        print(f"   Saving to: {output_path}")
+        with open(output_path, 'wb') as f:
+            f.write(tflite_model)
+        
+        # Calculate stats
+        quantized_size_mb = len(tflite_model) / (1024 * 1024)
+        reduction_percent = (1 - quantized_size_mb / original_size_mb) * 100
+        
+        print(f"\n✅ Quantization hoàn tất!")
+        print(f"📦 Original:  {original_size_mb:.1f} MB (FP32)")
+        print(f"📦 Quantized: {quantized_size_mb:.1f} MB (FP16)")
+        print(f"📉 Giảm:      {reduction_percent:.1f}%")
+        print(f"💾 Output:    {output_path}")
+        
+        print(f"\n💡 Lưu ý:")
+        print(f"   - File .tflite cần dùng TFLite interpreter")
+        print(f"   - Có thể giảm 1-2% accuracy")
+        print(f"   - Peak memory ước tính: ~{quantized_size_mb * 3 + 200:.0f} MB")
+        
+        return True
+        
+    except Exception as e:
+        print(f"\n❌ Quantization thất bại: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+def main():
+    """Main function"""
+    
+    print("=" * 60)
+    print("🔢 TENSORFLOW MODEL QUANTIZATION")
+    print("=" * 60)
+    
+    # Default paths
+    INPUT_PATH = "Dermal/dermatology_stage1.keras"
+    OUTPUT_PATH = "Dermal/dermatology_stage1_quantized.tflite"
+    
+    # Check if custom path provided
+    if len(sys.argv) > 1:
+        INPUT_PATH = sys.argv[1]
+    
+    if len(sys.argv) > 2:
+        OUTPUT_PATH = sys.argv[2]
+    
+    # Run quantization
+    success = quantize_model(INPUT_PATH, OUTPUT_PATH)
+    
+    if success:
+        print("\n🎉 Done! Model đã được quantize.")
+    else:
+        print("\n⚠️ Quantization bị bỏ qua hoặc thất bại.")
+    
+    print("=" * 60)
+
+if __name__ == "__main__":
+    main()

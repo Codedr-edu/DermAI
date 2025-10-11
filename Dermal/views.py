@@ -54,7 +54,26 @@ def upload_file(request):
 
 
 def health(request):
-    return HttpResponse("ok", status=200)
+    """
+    Enhanced health check that shows if model is pre-loaded.
+    
+    Render can use this endpoint to:
+    1. Check if service is alive
+    2. Verify model is loaded in memory (fast inference ready)
+    """
+    from . import AI_detection
+    model_loaded = AI_detection._loaded_model is not None
+    
+    # Return simple text for basic health checks, or JSON with ?verbose=1
+    if request.GET.get('verbose'):
+        return JsonResponse({
+            'status': 'ok',
+            'model_loaded': model_loaded,
+            'message': 'Model pre-loaded, ready for inference' if model_loaded else 'Model will load on first request'
+        })
+    
+    # Simple response for Render health checks
+    return HttpResponse(f"ok (model: {'loaded' if model_loaded else 'lazy'})", status=200)
 
 
 def memory_status(request):
