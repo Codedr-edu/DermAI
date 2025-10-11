@@ -40,16 +40,14 @@ Total:             ~1500 MB >>> 512 MB ❌ OVER LIMIT!
 
 ## ⚙️ CẤU HÌNH RECOMMENDED CHO PYTHONANYWHERE FREE (512MB)
 
-### 1. **TẮT PRE-LOADING** (QUAN TRỌNG!)
+### 1. **CONFIG TÙY THEO MODEL SIZE**
 
-Trên PythonAnywhere Web UI → Files → Edit `.env`:
+#### Option A: Model đã quantize (<500MB) - RECOMMENDED! ✅
 
 ```bash
-# TẮT model pre-loading (tiết kiệm RAM khi khởi động)
-PRELOAD_MODEL=false
-
-# TẮT Grad-CAM để tiết kiệm RAM (~200MB)
-ENABLE_GRADCAM=false
+# .env
+PRELOAD_MODEL=false          # Lazy load (tiết kiệm RAM lúc start)
+ENABLE_GRADCAM=true          # ✅ BẬT! User experience tốt
 
 # TensorFlow optimizations
 TF_CPP_MIN_LOG_LEVEL=3
@@ -57,29 +55,80 @@ TF_ENABLE_ONEDNN_OPTS=0
 OMP_NUM_THREADS=1
 ```
 
+**Tại sao BẬT Grad-CAM?**
+- ✅ Timeout 300s → đủ thời gian (inference + Grad-CAM ~10s)
+- ✅ Model nhỏ (~400MB) + Peak memory (~750MB) = Temporary spike OK
+- ✅ Linux tolerate temporary spikes (2-3s)
+- ✅ Memory cleanup sau inference
+- ✅ User có visualization (better UX!)
+
 **Kết quả:**
-- App khởi động nhanh
-- RAM thấp lúc đầu (~300MB)
-- Model chỉ load khi có request đầu tiên
-- Request đầu tiên: ~60-70s (OK, không timeout vì có 300s!)
-- Các request sau: ~3-5s
+- App khởi động nhanh (~5s)
+- RAM idle: ~520MB (vừa đủ!)
+- Request đầu tiên: ~65s (load model + Grad-CAM)
+- Request tiếp theo: ~8-12s (với Grad-CAM)
+- Peak memory: ~750-850MB (temporary, OK!)
 
-### 2. Nếu vẫn bị OOM (Out of Memory):
-
-**Option A: Quantize Model**
+#### Option B: Model CHƯA quantize (>700MB) ⚠️
 
 ```bash
-# Chuyển model từ FP32 → FP16
+# .env
+PRELOAD_MODEL=false
+ENABLE_GRADCAM=false         # ❌ TẮT để tránh OOM
+
+# TensorFlow optimizations
+TF_CPP_MIN_LOG_LEVEL=3
+TF_ENABLE_ONEDNN_OPTS=0
+OMP_NUM_THREADS=1
+```
+
+**Khi nào dùng Option B:**
+- Model > 700MB (chưa quantize)
+- Bị OOM khi test với Grad-CAM
+- Cần tối đa hóa stability
+
+**Kết quả:**
+- RAM idle: ~800-1000MB (cao, nguy hiểm!)
+- Request: ~5s (không có Grad-CAM)
+- Nhưng dễ bị OOM
+
+### 2. ⚠️ NẾU BỊ OOM (Out of Memory):
+
+**Triệu chứng:**
+- App bị kill với "Killed" message
+- Không có traceback
+- Error log chỉ có "Killed"
+
+**Giải pháp theo thứ tự:**
+
+#### Step 1: Quantize Model (NẾU CHƯA)
+
+```bash
+# Check size hiện tại
+ls -lh Dermal/*.keras
+
+# Nếu > 500MB → Quantize NGAY!
 python Dermal/quantize_model.py
 ```
 
-Giảm size từ ~1GB → ~500MB
+Giảm size từ ~1GB → ~400-500MB ✅
 
-**Option B: Upgrade Plan**
+#### Step 2: Tắt Grad-CAM (nếu vẫn bị OOM)
+
+```bash
+# .env
+ENABLE_GRADCAM=false
+```
+
+Tiết kiệm ~200MB peak memory.
+
+#### Step 3: Upgrade Plan (nếu muốn giữ Grad-CAM + model lớn)
 
 - Free: 512MB RAM
 - Hacker: $5/month, 1GB RAM ✅ RECOMMENDED!
 - Web Dev: $12/month, 3GB RAM
+
+**Nhưng thường Step 1 (quantize) là đủ!** ✅
 
 ---
 
@@ -193,23 +242,26 @@ Dashboard → Web → **Reload** button (màu xanh lá)
 ```bash
 curl https://yourusername.pythonanywhere.com/health?verbose=1
 
-# Response mong đợi:
+# Response mong đợi (trước khi upload ảnh):
 {
   "status": "ok",
   "model_loaded": false,  ← FALSE vì lazy loading
-  "message": "Model will load on first request"
+  "message": "Model will load on first request",
+  "gradcam_enabled": true  ← TRUE nếu enabled
 }
 ```
 
 ### Test 2: Upload Ảnh (Request đầu tiên)
 
-- Lần đầu tiên sẽ chậm (~60-70s) vì phải load model
+- Lần đầu tiên sẽ chậm (~65-70s) vì phải load model + generate Grad-CAM
 - **ĐÂY LÀ BÌNH THƯỜNG!** Timeout 300s nên không sao
 - Browser sẽ hiển thị loading spinner
+- **Quan trọng:** Check xem có heatmap visualization không!
 
 ### Test 3: Upload Ảnh (Lần 2)
 
-- Nhanh (~3-5s) vì model đã được load
+- Nhanh hơn (~8-12s nếu có Grad-CAM, ~3-5s nếu không)
+- Vẫn có heatmap (nếu Grad-CAM enabled)
 - Check health lại:
 
 ```bash

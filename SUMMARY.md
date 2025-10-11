@@ -116,9 +116,12 @@ git push
 # Upload code lên PA
 git clone hoặc upload ZIP
 
+# Quantize model (nếu > 500MB)
+python Dermal/quantize_model.py
+
 # Tạo .env
 echo "PRELOAD_MODEL=false" >> .env
-echo "ENABLE_GRADCAM=false" >> .env
+echo "ENABLE_GRADCAM=true" >> .env   # ✅ BẬT nếu model < 500MB!
 
 # Follow hướng dẫn trong DEPLOYMENT_PYTHONANYWHERE.md
 ```
@@ -127,9 +130,13 @@ echo "ENABLE_GRADCAM=false" >> .env
 
 ## 🎯 TÓM TẮT NHANH
 
-| Platform | Timeout | Spin Down? | Pre-load? | Lý do |
-|----------|---------|------------|-----------|-------|
-| **Render** | 30-60s | ✅ Yes | ✅ **YES** | Tránh timeout sau cold start |
-| **PythonAnywhere** | 300s | ❌ No | ❌ **NO** | Tiết kiệm RAM, timeout đủ dài |
+| Platform | Timeout | Spin Down? | Pre-load? | Grad-CAM? | Lý do |
+|----------|---------|------------|-----------|-----------|-------|
+| **Render** | 30-60s | ✅ Yes | ✅ **YES** | ✅ YES | Tránh timeout sau cold start |
+| **PythonAnywhere** | 300s | ❌ No | ❌ **NO** | ✅ **YES*** | Timeout đủ dài, quantize model |
+
+**(*) Grad-CAM trên PythonAnywhere:**
+- ✅ BẬT nếu model < 500MB (quantized)
+- ❌ TẮT nếu model > 700MB hoặc bị OOM
 
 **Code tự detect platform và hoạt động optimal cho từng môi trường!** ✅

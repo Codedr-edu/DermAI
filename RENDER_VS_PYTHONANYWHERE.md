@@ -185,8 +185,13 @@ gunicorn dermai.wsgi:application \
 ```bash
 # .env file
 PRELOAD_MODEL=false        # ← RECOMMENDED để tiết kiệm RAM!
-ENABLE_GRADCAM=false       # Tắt để tiết kiệm ~200MB
+ENABLE_GRADCAM=true        # ✅ BẬT nếu model < 500MB!
 DJANGO_SERVER_MODE=true
+
+# TensorFlow optimizations
+TF_CPP_MIN_LOG_LEVEL=3
+TF_ENABLE_ONEDNN_OPTS=0
+OMP_NUM_THREADS=1
 ```
 
 **WSGI config:**
@@ -197,8 +202,15 @@ DJANGO_SERVER_MODE=true
 
 **Kết quả:**
 - App start: ~5s (không load model)
-- Request đầu tiên: ~65s (load model) ⚠️ CHẤP NHẬN!
-- Request tiếp theo: ~3-5s ✅
+- Request đầu tiên: ~65-70s (load model + Grad-CAM) ⚠️ CHẤP NHẬN!
+- Request tiếp theo: ~8-12s (với Grad-CAM) ✅
+- Peak memory: ~750-850MB (temporary spike, OK!)
+
+**Tại sao BẬT Grad-CAM?**
+- ✅ Timeout 300s >> 70s (đủ dư)
+- ✅ Model quantized < 500MB
+- ✅ Linux tolerate temporary memory spike
+- ✅ User experience tốt hơn (có visualization)
 
 ---
 
