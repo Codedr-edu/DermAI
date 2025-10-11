@@ -57,6 +57,40 @@ def health(request):
     return HttpResponse("ok", status=200)
 
 
+def memory_status(request):
+    """Monitor memory usage - useful for debugging on Render"""
+    import psutil
+    import sys
+    
+    try:
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        
+        # Check if model is loaded
+        from . import AI_detection
+        model_loaded = AI_detection._loaded_model is not None
+        
+        return JsonResponse({
+            'status': 'ok',
+            'memory': {
+                'rss_mb': round(mem_info.rss / (1024 * 1024), 2),
+                'vms_mb': round(mem_info.vms / (1024 * 1024), 2),
+                'percent': round(process.memory_percent(), 2),
+            },
+            'model_loaded': model_loaded,
+            'python_version': sys.version,
+            'gradcam_enabled': AI_detection.ENABLE_GRADCAM,
+        })
+    except ImportError:
+        # psutil not installed
+        return JsonResponse({
+            'status': 'ok',
+            'message': 'Install psutil for memory monitoring',
+            'model_loaded': AI_detection._loaded_model is not None,
+            'gradcam_enabled': AI_detection.ENABLE_GRADCAM,
+        })
+
+
 @csrf_exempt
 @login_required
 def upload_image(request):

@@ -5,7 +5,8 @@ services:
     region: singapore
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 4 --timeout 300"
+    # Optimized for low memory: 1 worker, 2 threads, restart after 100 requests
+    startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 2 --worker-class gthread --timeout 300 --max-requests 100 --max-requests-jitter 10 --worker-tmp-dir /dev/shm"
     healthCheckPath: /health/
     envVars:
       - key: PYTHON_VERSION
@@ -16,8 +17,20 @@ services:
         value: False
       - key: ALLOWED_HOSTS
         sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: dermai-db
-          property: connectionString
+      # Grad-CAM enabled by default (optimized version)
+      # Set to 'false' only if still getting OOM errors
+      - key: ENABLE_GRADCAM
+        value: true
+      # TensorFlow optimizations
+      - key: TF_CPP_MIN_LOG_LEVEL
+        value: "3"
+      - key: TF_ENABLE_ONEDNN_OPTS
+        value: "0"
+      # Limit numpy threads
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
 
