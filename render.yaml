@@ -6,7 +6,8 @@ services:
     plan: free
     buildCommand: "./build.sh"
     # Optimized for low memory: 1 worker, 2 threads, restart after 100 requests
-    startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 2 --worker-class gthread --timeout 300 --max-requests 100 --max-requests-jitter 10 --worker-tmp-dir /dev/shm"
+    # --preload-app: Load Django BEFORE forking workers (model pre-loaded once, shared memory)
+    startCommand: "gunicorn dermai.wsgi:application --workers 1 --threads 2 --worker-class gthread --timeout 300 --max-requests 100 --max-requests-jitter 10 --worker-tmp-dir /dev/shm --preload-app"
     healthCheckPath: /health/
     envVars:
       - key: PYTHON_VERSION
@@ -17,6 +18,12 @@ services:
         value: False
       - key: ALLOWED_HOSTS
         sync: false
+      # Signal to Django that we're running in server mode (for model pre-loading)
+      - key: DJANGO_SERVER_MODE
+        value: true
+      # Enable model pre-loading (set to 'false' if OOM issues occur)
+      - key: PRELOAD_MODEL
+        value: true
       # Grad-CAM enabled by default (optimized version)
       # Set to 'false' only if still getting OOM errors
       - key: ENABLE_GRADCAM
