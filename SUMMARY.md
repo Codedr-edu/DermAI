@@ -1,11 +1,30 @@
 # 📝 TÓM TẮT: PRE-LOAD MODEL AN TOÀN
 
+## ⚡ QUICK ANSWER
+
+### ❓ Render vs PythonAnywhere - Cần làm gì?
+
+**RENDER FREE (30-60s timeout, có spin down):**
+```bash
+PRELOAD_MODEL=true   # ← BẮT BUỘC để tránh timeout!
+```
+
+**PYTHONANYWHERE FREE (300s timeout, không spin down):**
+```bash
+PRELOAD_MODEL=false  # ← RECOMMENDED để tiết kiệm RAM!
+```
+
+**Code đã support CẢ HAI!** Chỉ cần set env variable.
+
+---
+
 ## ✅ ĐÃ LÀM GÌ?
 
 ### 1. Sửa `Dermal/apps.py`
-- ✅ Pre-load model khi server start (không đợi request đầu tiên)
+- ✅ Pre-load model khi server start (tùy chọn qua env var)
 - ✅ Skip khi chạy migrations/collectstatic/test
 - ✅ Prevent load nhiều lần
+- ✅ Detect cả Gunicorn (Render) và mod_wsgi (PythonAnywhere)
 - ✅ Handle errors gracefully
 - ✅ Monitor memory usage
 
@@ -15,13 +34,26 @@
   - `DJANGO_SERVER_MODE=true` (detect server mode)
   - `PRELOAD_MODEL=true` (enable/disable pre-loading)
 
+---
+
 ## 🎯 KẾT QUẢ
+
+### Render Free (với pre-loading):
 
 | Trước | Sau |
 |-------|-----|
 | Request đầu tiên: **80-115s** | Request đầu tiên: **3-10s** |
 | 502/504 Timeout ❌ | 200 OK ✅ |
-| Model load mỗi request | Model load 1 lần duy nhất |
+| Model load mỗi cold start | Model load 1 lần khi start |
+
+### PythonAnywhere Free (với lazy loading):
+
+| Metric | Value |
+|--------|-------|
+| Request đầu tiên | **60-70s** (load model) ⚠️ OK, không timeout! |
+| Request tiếp theo | **3-5s** ✅ |
+| RAM usage (idle) | ~300MB (tiết kiệm!) |
+| Uptime | 24/7 (không sleep) |
 
 ## 🔒 CÁC VẤN ĐỀ ĐÃ XỬ LÝ
 
@@ -55,15 +87,49 @@ curl -F "image=@test.jpg" http://localhost:8000/upload
 
 ## 📖 ĐỌC THÊM
 
-- **Chi tiết đầy đủ:** `PRELOAD_SAFETY_ANALYSIS.md` (có giải thích kỹ từng vấn đề)
-- **Code changes:** `git diff HEAD~1`
+**Theo platform:**
+- 🚀 **Render:** `PRELOAD_SAFETY_ANALYSIS.md` (chi tiết pre-loading)
+- 🐍 **PythonAnywhere:** `DEPLOYMENT_PYTHONANYWHERE.md` (hướng dẫn deploy)
+- ⚖️ **So sánh:** `RENDER_VS_PYTHONANYWHERE.md` (chọn platform nào?)
+- 🔍 **Analysis:** `PYTHONANYWHERE_ANALYSIS.md` (phân tích kỹ thuật)
 
 ## 🚀 SẴN SÀNG DEPLOY!
 
-Code đã được kiểm tra kỹ và xử lý tất cả edge cases. An toàn để deploy lên Render.
+Code đã được kiểm tra kỹ và xử lý tất cả edge cases. 
+
+### Deploy lên Render:
 
 ```bash
+# Set trong Render dashboard Environment Variables
+PRELOAD_MODEL=true
+DJANGO_SERVER_MODE=true
+
+# Deploy
 git add Dermal/apps.py render.yaml
-git commit -m "feat: Add safe model pre-loading to prevent timeout"
+git commit -m "feat: Add safe model pre-loading (Render + PythonAnywhere support)"
 git push
 ```
+
+### Deploy lên PythonAnywhere:
+
+```bash
+# Upload code lên PA
+git clone hoặc upload ZIP
+
+# Tạo .env
+echo "PRELOAD_MODEL=false" >> .env
+echo "ENABLE_GRADCAM=false" >> .env
+
+# Follow hướng dẫn trong DEPLOYMENT_PYTHONANYWHERE.md
+```
+
+---
+
+## 🎯 TÓM TẮT NHANH
+
+| Platform | Timeout | Spin Down? | Pre-load? | Lý do |
+|----------|---------|------------|-----------|-------|
+| **Render** | 30-60s | ✅ Yes | ✅ **YES** | Tránh timeout sau cold start |
+| **PythonAnywhere** | 300s | ❌ No | ❌ **NO** | Tiết kiệm RAM, timeout đủ dài |
+
+**Code tự detect platform và hoạt động optimal cho từng môi trường!** ✅

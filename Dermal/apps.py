@@ -58,25 +58,37 @@ class DermalConfig(AppConfig):
         
         # Only pre-load in actual server processes
         # Check multiple ways to detect if we're running a server
+        # Supports: Gunicorn (Render), mod_wsgi (PythonAnywhere), uWSGI, etc.
         is_server = False
         
         # Method 1: Check argv[0] (script name)
+        # Covers: gunicorn, uvicorn, uwsgi, daphne
         if sys.argv and len(sys.argv) > 0:
             argv0_lower = sys.argv[0].lower()
-            if 'gunicorn' in argv0_lower or 'uvicorn' in argv0_lower or 'daphne' in argv0_lower:
+            if any(server in argv0_lower for server in ['gunicorn', 'uvicorn', 'uwsgi', 'daphne', 'wsgi']):
                 is_server = True
         
         # Method 2: Check sys.argv for runserver
         if 'runserver' in sys.argv:
             is_server = True
         
-        # Method 3: Check environment variable (most reliable for production)
+        # Method 3: Check environment variable (MOST RELIABLE!)
+        # Set this in production: DJANGO_SERVER_MODE=true
         if os.getenv('DJANGO_SERVER_MODE') == 'true':
             is_server = True
         
-        # Method 4: Check if we're running via WSGI (Gunicorn sets this)
+        # Method 4: Check WSGI environment
+        # Gunicorn, mod_wsgi, and uWSGI set these
         if os.getenv('WSGI_APPLICATION') or os.getenv('SERVER_SOFTWARE'):
             is_server = True
+        
+        # Method 5: Check for mod_wsgi (PythonAnywhere)
+        # mod_wsgi embeds Python in Apache
+        try:
+            import mod_wsgi
+            is_server = True
+        except ImportError:
+            pass
         
         if not is_server:
             # Not a server process, skip pre-loading
