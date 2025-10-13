@@ -8,7 +8,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.core.files.base import ContentFile
 from django.contrib.auth import authenticate, login
 from .models import *
-from .AI_detection import predict_skin_with_explanation
+#from .AI_detection import predict_skin_with_explanation
+from gradio_client import Client
 import os
 import requests
 import markdown2
@@ -20,9 +21,12 @@ from django.urls import reverse
 # def user
 
 
+
+
 @csrf_exempt
 @login_required
 def upload_file(request):
+    client = Client("https://codedr-skin-detection.hf.space")
     if request.method == "POST":
         try:
             uploaded_file = request.FILES.get("image")
@@ -35,13 +39,14 @@ def upload_file(request):
             image_file = ContentFile(img_bytes, name=file_name)
 
             # Gọi model dự đoán với giải thích heatmap
-            results, heatmap_base64 = predict_skin_with_explanation(img_bytes)
+            #results, heatmap_base64 = predict_skin_with_explanation(img_bytes)
+            output = client.predict(img_bytes, api_name="predict_with_gradcam")
 
             # Lưu vào DB
             skin_img = Dermal_image.objects.create(
                 image=image_file,
-                result=results,
-                heatmap=heatmap_base64,
+                result=output['result'],
+                heatmap=output['heatmap_base64'],
                 user=Profile.objects.get(user=request.user)
             )
 
@@ -53,6 +58,7 @@ def upload_file(request):
     return JsonResponse({"error": "Chỉ hỗ trợ POST"}, status=405)
 
 
+"""
 def health(request):
     """
     Enhanced health check that shows if model is pre-loaded.
@@ -108,11 +114,12 @@ def memory_status(request):
             'model_loaded': AI_detection._loaded_model is not None,
             'gradcam_enabled': AI_detection.ENABLE_GRADCAM,
         })
-
+"""
 
 @csrf_exempt
 @login_required
 def upload_image(request):
+    client = Client("https://codedr-skin-detection.hf.space")
     if request.method == "POST":
         try:
             # Check for file upload (from modal)
@@ -136,13 +143,14 @@ def upload_image(request):
             image_file = ContentFile(img_bytes, name=file_name)
 
             # Gọi model dự đoán với giải thích heatmap
-            results, heatmap_base64 = predict_skin_with_explanation(img_bytes)
+            #results, heatmap_base64 = predict_skin_with_explanation(img_bytes)
+            output = client.predict(img_bytes, api_name="predict_with_gradcam")
 
             # Lưu vào DB
             skin_img = Dermal_image.objects.create(
                 image=image_file,
-                result=results,
-                heatmap=heatmap_base64,
+                result=output['result'],
+                heatmap=output['heatmap_base64'],
                 user=Profile.objects.get(user=request.user)
             )
 

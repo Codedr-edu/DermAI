@@ -22,6 +22,6 @@ urlpatterns = [
     path('upload/file/', upload_file, name='upload_file'),
     # path('edit_profile/', edit_profile, name='edit_profile'),
     path('predict/', predict, name="predict"),
-    path('health/', health, name='health'),
-    path('memory/', memory_status, name='memory_status'),
+    #path('health/', health, name='health'),
+    #path('memory/', memory_status, name='memory_status'),
 ]
